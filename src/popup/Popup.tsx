@@ -13,8 +13,7 @@ export const Popup: React.FC = () => {
     const [selected, setSelected] = useState<Record<string, boolean>>({});
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState<{ step: number; total: number } | null>(null);
-    const [debugOpen, setDebugOpen] = useState(false);
-    const [debugMeta, setDebugMeta] = useState<any>(null);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
     useEffect(() => {
         // Get active tab URL
@@ -26,8 +25,8 @@ export const Popup: React.FC = () => {
                 const tab = tabs[0];
                 const url = tab?.url ?? null;
                 setCurrentUrl(url);
-            } catch (e) {
-                console.error('Failed to query tab', e);
+            } catch (_e) {
+                setErrorMsg('Unable to determine active tab URL.');
             }
         };
         getUrl();
@@ -40,7 +39,6 @@ export const Popup: React.FC = () => {
             setLoading(true);
             const path = currentUrl;
             const meta = await fetchModuleCatalog(path);
-            setDebugMeta(meta);
             if (!mounted) return;
             if (meta) {
                 setModuleTitle(meta.title ?? null);
@@ -64,7 +62,7 @@ export const Popup: React.FC = () => {
     const handleGenerate = async () => {
         const chosen = units.filter((u) => selected[u.url]);
         if (chosen.length === 0) {
-            alert('Please select at least one unit');
+            setErrorMsg('Please select at least one unit to include in the PDF.');
             return;
         }
         setLoading(true);
@@ -76,10 +74,9 @@ export const Popup: React.FC = () => {
                 if (c) cleaned.push({ title: c.title, url: c.url, html: c.html });
             }
 
-            await generatePDF(cleaned, `${moduleTitle || 'learnflow'}.pdf`, (p) => setProgress(p));
+            await generatePDF(cleaned, `${moduleTitle || 'learnflow'}.pdf`, (p) => setProgress(p), moduleTitle || undefined);
         } catch (err) {
-            console.error('PDF generation failed', err);
-            alert('PDF generation failed: ' + (err as any)?.message || err);
+            setErrorMsg('PDF generation failed: ' + ((err as any)?.message || String(err)));
         } finally {
             setLoading(false);
             setProgress(null);
@@ -134,16 +131,11 @@ export const Popup: React.FC = () => {
 
                 <div className="tip">Tip: Open a Microsoft Learn module page and click the extension to load units.</div>
 
-                <div className="debugToggle">
-                    <button onClick={() => setDebugOpen((s) => !s)} className="btn" style={{ fontSize: 12 }}>
-                        {debugOpen ? 'Hide debug' : 'Show debug'}
-                    </button>
-                    {debugOpen && (
-                        <pre className="debugPre" style={{ marginTop: 8 }}>
-                            {JSON.stringify(debugMeta, null, 2)}
-                        </pre>
-                    )}
-                </div>
+                {errorMsg && (
+                    <div style={{ marginTop: 8, color: '#b91c1c', fontSize: 13 }}>
+                        {errorMsg}
+                    </div>
+                )}
             </div>
         </div>
     );

@@ -43,17 +43,15 @@ export async function fetchModuleCatalog(pathOrUrl: string): Promise<ModuleMetad
   const path = parseModulePathFromUrl(pathOrUrl);
   const search = encodeURIComponent(path.replace(/^\//, ''));
   const api = `https://learn.microsoft.com/api/catalog?search=${search}&language=en-US`;
-  try {
+    try {
     const res = await fetch(api);
-    console.debug('[scraper] Catalog API', api);
     const resOk = res.ok;
     let json: any = null;
     try {
       json = await res.json();
     } catch (e) {
-      console.debug('[scraper] Catalog API returned non-JSON response', e);
+      // ignore non-JSON responses
     }
-    console.debug('[scraper] Catalog response ok:', resOk, 'json:', json);
     if (!resOk) {
       // continue to HTML fallback below
     }
@@ -62,7 +60,7 @@ export async function fetchModuleCatalog(pathOrUrl: string): Promise<ModuleMetad
     //  - json.items[] with type/module and children
     //  - json.results
     const items = (json && (json.items || json.results)) || json;
-    console.debug('[scraper] resolved items:', Array.isArray(items) ? items.length : typeof items);
+    // resolved items info omitted in production
     if (!Array.isArray(items)) {
       // don't return early; we'll attempt HTML parsing fallback later
     }
@@ -80,7 +78,7 @@ export async function fetchModuleCatalog(pathOrUrl: string): Promise<ModuleMetad
     }
 
     if (!moduleItem) {
-      console.debug('[scraper] no module-like item found in catalog results');
+      // no module-like item found
     }
 
     const title = (moduleItem && (moduleItem.title || moduleItem.name)) || 'Module';
@@ -102,7 +100,7 @@ export async function fetchModuleCatalog(pathOrUrl: string): Promise<ModuleMetad
         title: it.title || it.name || 'Unit',
         url: it.url || it.site_url || it.href || (it.path ? `https://learn.microsoft.com${it.path}` : '')
       })).filter((u: ModuleUnit) => !!u.url);
-      console.debug('[scraper] units from search hits:', units.length);
+      // units from search hits
     }
 
     // If still no units (or catalog returned nothing useful), try fetching the page HTML
@@ -131,7 +129,7 @@ export async function fetchModuleCatalog(pathOrUrl: string): Promise<ModuleMetad
             }
           }).filter((u) => !!u.url);
 
-          console.debug('[scraper] parsedUnits from HTML:', parsedUnits.length, 'finalTitle:', finalTitle);
+          // parsedUnits from HTML
           if (parsedUnits.length > 0) {
             return { title: finalTitle || title, units: parsedUnits };
           }
@@ -141,10 +139,10 @@ export async function fetchModuleCatalog(pathOrUrl: string): Promise<ModuleMetad
       }
     }
 
-    console.debug('[scraper] returning title and units counts', { title, unitsCount: units.length });
+    // returning title and units counts
     return { title, units };
   } catch (err) {
-    console.error('Catalog fetch failed', err);
+    // Catalog fetch failed
     return { title: null, units: [], debug: { error: String(err) } };
   }
 }
@@ -160,7 +158,7 @@ async function toDataUrl(src: string): Promise<string> {
       fr.readAsDataURL(blob);
     });
   } catch (e) {
-    console.warn('Failed to inline image', src, e);
+    // Failed to inline image – leave original src
     return src;
   }
 }
@@ -533,7 +531,7 @@ export async function fetchAndCleanUnit(url: string): Promise<{ title: string; u
     const html = wrapper.innerHTML;
     return { title: title || url, url, html };
   } catch (err) {
-    console.error('Failed to fetch/clean unit', url, err);
+    // Failed to fetch/clean unit
     return null;
   }
 }
