@@ -523,33 +523,39 @@ export const Popup: React.FC = () => {
       return (rootData.moduleNode?.units ?? []).filter((u) => selected.has(u.url));
 
     if (rootData.type === 'learning-path') {
-      const result: { title: string; url: string }[] = [];
-      for (const mod of rootData.node.modules) result.push(...(await getModUnits(mod)));
-      return result;
+      const results = await Promise.all(
+        rootData.node.modules.map((mod) => getModUnits(mod)),
+      );
+      return results.flat();
     }
 
     if (rootData.type === 'course') {
-      const result: { title: string; url: string }[] = [];
-      for (const lp of rootData.node.learningPaths) {
-        let mods = lp.modules;
-        if (!lp.modulesLoaded) {
-          const fetched = await fetchLearningPathStructure(lp.url);
-          mods = fetched.modules;
-          setRootData((prev) => {
-            if (!prev || prev.type !== 'course') return prev;
-            return {
-              ...prev,
-              node: setLPInCourse(prev.node, lp.url, {
-                title: fetched.title,
-                modules: mods,
-                modulesLoaded: true,
-              }),
-            };
-          });
-        }
-        for (const mod of mods) result.push(...(await getModUnits(mod, lp.url)));
-      }
-      return result;
+      // Parallelize LP and module resolution to avoid sequential blocking
+      const lpResults = await Promise.all(
+        rootData.node.learningPaths.map(async (lp) => {
+          let mods = lp.modules;
+          if (!lp.modulesLoaded) {
+            const fetched = await fetchLearningPathStructure(lp.url);
+            mods = fetched.modules;
+            setRootData((prev) => {
+              if (!prev || prev.type !== 'course') return prev;
+              return {
+                ...prev,
+                node: setLPInCourse(prev.node, lp.url, {
+                  title: fetched.title,
+                  modules: mods,
+                  modulesLoaded: true,
+                }),
+              };
+            });
+          }
+          const modResults = await Promise.all(
+            mods.map((mod) => getModUnits(mod, lp.url)),
+          );
+          return modResults.flat();
+        }),
+      );
+      return lpResults.flat();
     }
     return [];
   }, [rootData, selected]);
@@ -560,7 +566,16 @@ export const Popup: React.FC = () => {
     setErrorMsg(null);
     setLoading(true); // brief resolveSelectedUnits phase
     try {
-      const units = await resolveSelectedUnits();
+      // Race the unit-resolution against a hard timeout so we never hang at "Preparing…"
+      const units = await Promise.race([
+        resolveSelectedUnits(),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Timed out resolving units. Please try again.')),
+            30_000,
+          ),
+        ),
+      ]);
       if (units.length === 0) {
         setErrorMsg('Please select at least one unit.');
         return;

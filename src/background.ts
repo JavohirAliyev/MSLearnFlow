@@ -12,6 +12,10 @@
 const OFFSCREEN_URL = chrome.runtime.getURL('offscreen.html');
 
 async function ensureOffscreen(): Promise<void> {
+  // Always tear down any stale offscreen document first.
+  // This avoids the race where a leftover page from a previous (failed) job
+  // already consumed the mlfPendingJob key and won't pick up the new one.
+  await closeOffscreen();
   try {
     await chrome.offscreen.createDocument({
       url: OFFSCREEN_URL,
@@ -47,6 +51,39 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .then(() => sendResponse({ ok: true }))
       .catch((err) => sendResponse({ ok: false, error: String(err) }));
     return true; // will respond asynchronously
+  }
+
+  // ── Storage proxy for the offscreen document ──────────────────────────
+  // Offscreen pages may not have access to chrome.storage in all Chrome
+  // versions, so we act as a proxy.
+
+  if (msg.type === 'MLF_GET_PENDING_JOB') {
+    chrome.storage.session.get('mlfPendingJob', (result) => {
+      const job = result?.mlfPendingJob ?? null;
+      // Clear the key so a reload of the offscreen page won't re-run the job.
+      if (job) chrome.storage.session.remove('mlfPendingJob');
+      sendResponse(job);
+    });
+    return true; // async
+  }
+
+  if (msg.type === 'MLF_WRITE_JOB') {
+    chrome.storage.session.set({ mlfJob: msg.state });
+    return false;
+  }
+
+  if (msg.type === 'MLF_DOWNLOAD') {
+    chrome.downloads.download(
+      { url: msg.dataUrl, filename: msg.filename, saveAs: false },
+      (downloadId) => {
+        if (chrome.runtime.lastError) {
+          sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          sendResponse({ ok: true, downloadId });
+        }
+      },
+    );
+    return true; // async
   }
 
   if (msg.type === 'MLF_CANCEL_JOB') {

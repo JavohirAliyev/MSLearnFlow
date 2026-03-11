@@ -12,6 +12,29 @@
   responses you observe in production.
 */
 
+// ─── Fetch with timeout ──────────────────────────────────────────────────────
+
+const FETCH_TIMEOUT_MS = 15_000; // 15 seconds
+
+/** Fetch with a hard timeout to prevent indefinite hangs. */
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init?: RequestInit & { timeout?: number },
+): Promise<Response> {
+  const ms = init?.timeout ?? FETCH_TIMEOUT_MS;
+  const controller = new AbortController();
+  if (init?.signal) {
+    // Forward an external abort to our controller
+    init.signal.addEventListener('abort', () => controller.abort(init.signal!.reason));
+  }
+  const timer = setTimeout(() => controller.abort(new DOMException('Fetch timed out', 'TimeoutError')), ms);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ─── Hierarchy types ────────────────────────────────────────────────────────
 
 export type ContentType = 'course' | 'learning-path' | 'module' | 'unit' | 'unknown';
@@ -102,7 +125,7 @@ export function moduleUrlFromUnitUrl(unitUrl: string): string {
 
 /** Fetch a Course page and return the top-level CourseNode with LP stubs. */
 export async function fetchCourseStructure(url: string): Promise<CourseNode> {
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
   const text = await res.text();
   const parser = new DOMParser();
   const doc = parser.parseFromString(text, 'text/html');
@@ -134,7 +157,7 @@ export async function fetchCourseStructure(url: string): Promise<CourseNode> {
 
 /** Fetch a Learning-Path page and return the LearningPathNode with Module stubs. */
 export async function fetchLearningPathStructure(url: string): Promise<LearningPathNode> {
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
   const text = await res.text();
   const parser = new DOMParser();
   const doc = parser.parseFromString(text, 'text/html');
@@ -217,7 +240,7 @@ export async function fetchModuleCatalog(pathOrUrl: string): Promise<ModuleMetad
   const search = encodeURIComponent(path.replace(/^\//, ''));
   const api = `https://learn.microsoft.com/api/catalog?search=${search}&language=en-US`;
     try {
-    const res = await fetch(api);
+    const res = await fetchWithTimeout(api);
     const resOk = res.ok;
     let json: any = null;
     try {
@@ -251,10 +274,11 @@ export async function fetchModuleCatalog(pathOrUrl: string): Promise<ModuleMetad
     }
 
     if (!moduleItem) {
-      // no module-like item found
+      // No usable item from catalog — go straight to HTML fallback
+      return attemptHtmlFallback(pathOrUrl);
     }
 
-    const title = (moduleItem && (moduleItem.title || moduleItem.name)) || 'Module';
+    const title = (moduleItem.title || moduleItem.name) || 'Module';
 
     // Try to extract child units
     let units: ModuleUnit[] = [];
@@ -277,58 +301,123 @@ export async function fetchModuleCatalog(pathOrUrl: string): Promise<ModuleMetad
     }
 
     // If still no units (or catalog returned nothing useful), try fetching the page HTML
-    // and parse the unit list directly (robust for module pages served as HTML).
     if (units.length === 0) {
-      try {
-        const pageRes = await fetch(pathOrUrl);
-        if (pageRes.ok) {
-          const txt = await pageRes.text();
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(txt, 'text/html');
-
-          // Try common title locations
-          const h1 = doc.querySelector('h1.title')?.textContent?.trim() || doc.querySelector('h1')?.textContent?.trim();
-          const metaTitle = doc.querySelector('meta[property="og:title"]')?.getAttribute('content') || doc.querySelector('title')?.textContent;
-          const finalTitle = (h1 || metaTitle || title || '').trim();
-
-          const unitAnchors = Array.from(doc.querySelectorAll('#unit-list a.unit-title, #unit-list a')) as HTMLAnchorElement[];
-          const parsedUnits: ModuleUnit[] = unitAnchors.map((a) => {
-            const href = a.getAttribute('href') || a.href || '';
-            try {
-              const url = new URL(href, pathOrUrl).toString();
-              return { title: (a.textContent || 'Unit').trim(), url };
-            } catch (e) {
-              return { title: (a.textContent || 'Unit').trim(), url: href };
-            }
-          }).filter((u) => !!u.url);
-
-          // parsedUnits from HTML
-          if (parsedUnits.length > 0) {
-            return { title: finalTitle || title, units: parsedUnits };
-          }
-        }
-      } catch (e) {
-        // ignore page-parse failures, we'll fall through to returning what we have
-      }
+      const fallback = await attemptHtmlFallback(pathOrUrl, title);
+      if (fallback && fallback.units.length > 0) return fallback;
     }
 
     // returning title and units counts
     return { title, units };
   } catch (err) {
-    // Catalog fetch failed
+    // Catalog fetch failed — try HTML fallback as last resort
+    try {
+      const fallback = await attemptHtmlFallback(pathOrUrl);
+      if (fallback && fallback.units.length > 0) return fallback;
+    } catch { /* ignore */ }
     return { title: null, units: [], debug: { error: String(err) } };
+  }
+}
+
+/**
+ * HTML fallback: fetch the module page directly and scrape the unit list.
+ * Works even when the Catalog API changes or is unavailable.
+ */
+async function attemptHtmlFallback(
+  pathOrUrl: string,
+  existingTitle?: string,
+): Promise<ModuleMetadata | null> {
+  try {
+    const pageRes = await fetchWithTimeout(pathOrUrl);
+    if (!pageRes.ok) return null;
+    const txt = await pageRes.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(txt, 'text/html');
+
+    const h1 =
+      doc.querySelector('h1.title')?.textContent?.trim() ||
+      doc.querySelector('h1')?.textContent?.trim();
+    const metaTitle =
+      doc.querySelector('meta[property="og:title"]')?.getAttribute('content') ||
+      doc.querySelector('title')?.textContent;
+    const finalTitle = (h1 || metaTitle || existingTitle || 'Module').trim()
+      .replace(/\s*[-|]\s*Training.*$/i, '')
+      .replace(/\s*[-|]\s*Microsoft Learn/gi, '');
+
+    // Try multiple selector strategies – MS Learn page structure can change
+    const selectorGroups = [
+      '#unit-list a.unit-title',
+      '#unit-list a',
+      'nav[aria-label="Module navigation"] a[href*="/training/modules/"]',
+      '[data-bi-name="unit"] a',
+      '.unit-list a[href*="/training/modules/"]',
+      'a[href*="/training/modules/"][data-linktype]',
+    ];
+
+    let unitAnchors: HTMLAnchorElement[] = [];
+    for (const sel of selectorGroups) {
+      unitAnchors = Array.from(doc.querySelectorAll(sel)) as HTMLAnchorElement[];
+      if (unitAnchors.length > 0) break;
+    }
+
+    // Last-ditch: any link whose href matches the module-unit URL pattern
+    if (unitAnchors.length === 0) {
+      const moduleSlug = pathOrUrl.match(/\/modules\/([^/]+)/)?.[1];
+      if (moduleSlug) {
+        unitAnchors = (Array.from(
+          doc.querySelectorAll(`a[href*="/modules/${moduleSlug}/"]`),
+        ) as HTMLAnchorElement[]).filter((a) => {
+          const href = a.getAttribute('href') || '';
+          // Must have a second path segment after the module slug (the unit slug)
+          return /\/modules\/[^/]+\/[^/]+/.test(href);
+        });
+      }
+    }
+
+    // De-duplicate by resolved URL
+    const seen = new Set<string>();
+    const parsedUnits: ModuleUnit[] = [];
+    for (const a of unitAnchors) {
+      const href = a.getAttribute('href') || a.href || '';
+      if (!href) continue;
+      let resolved: string;
+      try {
+        resolved = new URL(href, pathOrUrl).toString().replace(/\/$/, '');
+      } catch {
+        resolved = href;
+      }
+      if (seen.has(resolved)) continue;
+      seen.add(resolved);
+      const title = (a.textContent || 'Unit').trim().replace(/\s+/g, ' ');
+      if (title.length < 2) continue;
+      parsedUnits.push({ title, url: resolved });
+    }
+
+    if (parsedUnits.length > 0) {
+      return { title: finalTitle, units: parsedUnits };
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
 async function toDataUrl(src: string): Promise<string> {
   try {
-    const r = await fetch(src);
-    const blob = await r.blob();
+    const r = await fetchWithTimeout(src, { timeout: 8_000 });
+    // Race blob() against a timeout to prevent hanging on slow body streaming
+    const blob = await Promise.race([
+      r.blob(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Blob read timed out')), 8_000),
+      ),
+    ]);
     return await new Promise<string>((resolve, reject) => {
       const fr = new FileReader();
       fr.onloadend = () => resolve(fr.result as string);
       fr.onerror = reject;
       fr.readAsDataURL(blob);
+      // Safety: if FileReader doesn't fire after 5s, resolve with original src
+      setTimeout(() => resolve(src), 5_000);
     });
   } catch (e) {
     // Failed to inline image – leave original src
@@ -339,9 +428,15 @@ async function toDataUrl(src: string): Promise<string> {
 // Clean a unit page's HTML: extract main content, remove navs/feedback, inline assets, inline styles
 export async function fetchAndCleanUnit(url: string): Promise<{ title: string; url: string; html: string } | null> {
   try {
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url);
     if (!res.ok) return null;
-    const text = await res.text();
+    // Race text() against a timeout to prevent hanging on slow body streaming
+    const text = await Promise.race([
+      res.text(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Body read timed out')), 15_000),
+      ),
+    ]);
     const parser = new DOMParser();
     const doc = parser.parseFromString(text, 'text/html');
 
@@ -629,18 +724,33 @@ export async function fetchAndCleanUnit(url: string): Promise<{ title: string; u
       node.replaceWith(a);
     });
 
-    // Inline images
+    // Inline images — resolve src against the ORIGINAL page URL (not the
+    // offscreen/DOMParser document URL which would produce broken chrome-extension:// URLs)
     const imgs = Array.from(clone.querySelectorAll('img')) as HTMLImageElement[];
-    await Promise.all(imgs.map(async (img) => {
-      const src = img.src;
-      if (!src) return;
-      try {
-        const data = await toDataUrl(src);
-        img.src = data;
-      } catch (e) {
-        // leave original src if conversion fails
-      }
-    }));
+    // Cap total image-inlining time so one unit can’t block the pipeline
+    const IMAGE_PHASE_TIMEOUT = 20_000; // 20 s max for all images in one unit
+    await Promise.race([
+      Promise.all(imgs.map(async (img) => {
+        // Use getAttribute to get the raw (possibly relative) src from the HTML,
+        // then resolve it against the original page URL.
+        const rawSrc = img.getAttribute('src') || '';
+        if (!rawSrc || rawSrc.startsWith('data:')) return;
+        let resolvedSrc: string;
+        try {
+          resolvedSrc = new URL(rawSrc, url).toString();
+        } catch {
+          resolvedSrc = rawSrc;
+        }
+        try {
+          const data = await toDataUrl(resolvedSrc);
+          img.src = data;
+        } catch (e) {
+          // Set img src to the correctly-resolved absolute URL at minimum
+          img.setAttribute('src', resolvedSrc);
+        }
+      })),
+      new Promise<void>((resolve) => setTimeout(resolve, IMAGE_PHASE_TIMEOUT)),
+    ]);
 
     // DO NOT inline MS Learn CSS - it causes page-ending styles to appear mid-document
     // Instead, use minimal clean styles that we control

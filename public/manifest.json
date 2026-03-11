@@ -12,7 +12,10 @@
         "downloads"
     ],
     "host_permissions": [
-        "https://learn.microsoft.com/*"
+        "https://learn.microsoft.com/*",
+        "https://*.microsoft.com/*",
+        "https://*.msecnd.net/*",
+        "https://*.azureedge.net/*"
     ],
     "icons": {
         "16": "icons/icon16.png",
