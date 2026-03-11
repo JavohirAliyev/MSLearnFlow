@@ -3,12 +3,47 @@
   - Fetches Microsoft Learn module metadata via the Catalog API (best-effort)
   - Fetches unit pages and cleans them using DOMParser
   - Inlines CSS and converts <img> sources to base64 data URLs
+  - Understands the full MS Learn content hierarchy:
+      Course → Learning Paths → Modules → Units
 
   Note: The Microsoft Learn Catalog API surface can vary; this implementation
   uses a flexible "search by path" approach and attempts to find the module
   and its child units. You may need to adapt the parsing to the exact API
   responses you observe in production.
 */
+
+// ─── Hierarchy types ────────────────────────────────────────────────────────
+
+export type ContentType = 'course' | 'learning-path' | 'module' | 'unit' | 'unknown';
+
+export interface UnitNode {
+  title: string;
+  url: string;
+}
+
+export interface ModuleNode {
+  uid?: string;
+  title: string;
+  url: string;
+  units: UnitNode[];
+  unitsLoaded: boolean;
+}
+
+export interface LearningPathNode {
+  uid?: string;
+  title: string;
+  url: string;
+  modules: ModuleNode[];
+  modulesLoaded: boolean;
+}
+
+export interface CourseNode {
+  title: string;
+  url: string;
+  learningPaths: LearningPathNode[];
+}
+
+// ─── Legacy types (kept for PDF generation pipeline) ────────────────────────
 
 export type ModuleUnit = {
   title: string;
@@ -20,6 +55,144 @@ export type ModuleMetadata = {
   units: ModuleUnit[];
   debug?: any;
 };
+
+// ─── Content-type detection ──────────────────────────────────────────────────
+
+/** Detect the MS Learn content type from a URL. */
+export function detectContentType(url: string): ContentType {
+  try {
+    const { pathname } = new URL(url);
+    if (/\/training\/courses\//i.test(pathname)) return 'course';
+    if (/\/training\/paths\//i.test(pathname)) return 'learning-path';
+    // Unit pages: /training/modules/{module-slug}/{unit-slug}  (has two path segments after "modules")
+    if (/\/training\/modules\/[^/]+\/[^/]+/i.test(pathname)) return 'unit';
+    if (/\/training\/modules\//i.test(pathname)) return 'module';
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** Strip the common "learn.wwl." / "learn.azure." etc. UID prefix to get the slug. */
+function uidToSlug(uid: string): string {
+  return uid.replace(/^learn\.[^.]+\./, '');
+}
+
+/** Friendly title from a slug (fallback before real title is loaded). */
+function slugToTitle(slug: string): string {
+  return slug
+    .replace(/-/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** For a unit URL, return the parent module URL (strip the last path segment). */
+export function moduleUrlFromUnitUrl(unitUrl: string): string {
+  try {
+    const u = new URL(unitUrl);
+    const parts = u.pathname.replace(/\/$/, '').split('/');
+    parts.pop(); // remove unit slug
+    u.pathname = parts.join('/') + '/';
+    return u.toString();
+  } catch {
+    return unitUrl;
+  }
+}
+
+// ─── Structure fetchers ──────────────────────────────────────────────────────
+
+/** Fetch a Course page and return the top-level CourseNode with LP stubs. */
+export async function fetchCourseStructure(url: string): Promise<CourseNode> {
+  const res = await fetch(url);
+  const text = await res.text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, 'text/html');
+
+  const h1 = doc.querySelector('h1')?.textContent?.trim();
+  const metaTitle = doc
+    .querySelector('meta[property="og:title"]')
+    ?.getAttribute('content')
+    ?.replace(/\s*[-|]\s*Training.*$/i, '')
+    .trim();
+  const title = h1 || metaTitle || 'Course';
+
+  // <meta name="learn_item" content="learn.wwl.{slug}"> tags list the LP UIDs
+  const lpMetas = Array.from(doc.querySelectorAll('meta[name="learn_item"]'));
+  const learningPaths: LearningPathNode[] = lpMetas.map((meta) => {
+    const uid = meta.getAttribute('content') || '';
+    const slug = uidToSlug(uid);
+    return {
+      uid,
+      title: slugToTitle(slug), // placeholder; real title loaded on expand
+      url: `https://learn.microsoft.com/en-us/training/paths/${slug}/`,
+      modules: [],
+      modulesLoaded: false,
+    };
+  });
+
+  return { title, url, learningPaths };
+}
+
+/** Fetch a Learning-Path page and return the LearningPathNode with Module stubs. */
+export async function fetchLearningPathStructure(url: string): Promise<LearningPathNode> {
+  const res = await fetch(url);
+  const text = await res.text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, 'text/html');
+
+  const h1 = doc.querySelector('h1.title, h1')?.textContent?.trim();
+  const metaTitle = doc
+    .querySelector('meta[property="og:title"]')
+    ?.getAttribute('content')
+    ?.replace(/\s*[-|]\s*Training.*$/i, '')
+    .trim();
+  const title = h1 || metaTitle || 'Learning Path';
+  const uid = doc.querySelector('meta[name="uid"]')?.getAttribute('content') ?? undefined;
+
+  // Each module is a <div data-bi-name="module"> block
+  const moduleBoxes = Array.from(doc.querySelectorAll('[data-bi-name="module"]'));
+  const modules: ModuleNode[] = moduleBoxes
+    .map((box) => {
+      // The module title is in a semibold anchor that links to the module page
+      const titleLink = box.querySelector(
+        'a[href*="modules/"].font-weight-semibold, a[href*="modules/"][class*="font-weight-semibold"], .column.is-auto a[href*="modules/"]'
+      ) as HTMLAnchorElement | null;
+      // Fallback: any anchor with modules/ in href
+      const anyLink = titleLink ||
+        (box.querySelector('a[href*="modules/"]') as HTMLAnchorElement | null);
+      const moduleTitle =
+        (titleLink?.textContent || anyLink?.textContent || '').trim().replace(/\s+/g, ' ') ||
+        'Module';
+      const href = anyLink?.getAttribute('href') || '';
+      let moduleUrl = '';
+      try {
+        moduleUrl = href ? new URL(href, url).toString() : '';
+      } catch {
+        moduleUrl = href;
+      }
+      const boxId = (box as HTMLElement).id || undefined;
+      return {
+        uid: boxId,
+        title: moduleTitle,
+        url: moduleUrl,
+        units: [],
+        unitsLoaded: false,
+      };
+    })
+    .filter((m) => !!m.url);
+
+  return { uid, title, url, modules, modulesLoaded: true };
+}
+
+/** Fetch a Module page (via Catalog API + HTML fallback) and return ModuleNode with Units. */
+export async function fetchModuleStructure(url: string): Promise<ModuleNode> {
+  const meta = await fetchModuleCatalog(url);
+  const title = meta?.title || 'Module';
+  const units: UnitNode[] = (meta?.units || []).map((u) => ({
+    title: u.title,
+    url: u.url,
+  }));
+  return { title, url, units, unitsLoaded: true };
+}
 
 // Attempt to extract the module slug/path from the full URL
 export function parseModulePathFromUrl(url: string): string {

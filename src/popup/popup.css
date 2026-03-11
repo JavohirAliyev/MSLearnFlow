@@ -9,6 +9,8 @@
   --shadow: 0 6px 18px rgba(16,24,40,0.06);
 }
 
+/* ── Layout ───────────────────────────────────────────────────────────────── */
+
 .popup{
   width:480px;
   padding:16px;
@@ -31,41 +33,238 @@
   color:var(--primary);
 }
 
-.module{
-  margin-bottom:12px;
+/* ── Context header ───────────────────────────────────────────────────────── */
+
+.context-header{
+  margin-bottom:10px;
+  padding-bottom:10px;
+  border-bottom:1px solid var(--border);
+}
+
+.context-header__row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.context-header__title{
+  font-weight:600;
+  font-size:13px;
+  color:var(--primary);
+  line-height:1.3;
+}
+
+.context-header__sub{
+  font-size:11px;
+  color:var(--muted);
+  margin-top:3px;
+}
+
+/* ── Type badges ──────────────────────────────────────────────────────────── */
+
+.badge{
+  display:inline-block;
+  padding:2px 7px;
+  border-radius:4px;
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+  white-space:nowrap;
+  flex-shrink:0;
+}
+
+.badge--course       { background:#dbeafe; color:#1d4ed8; }
+.badge--learning-path{ background:#ede9fe; color:#6d28d9; }
+.badge--module       { background:#d1fae5; color:#065f46; }
+.badge--unit         { background:#fef3c7; color:#92400e; }
+
+/* ── Selection toolbar ────────────────────────────────────────────────────── */
+
+.selection-toolbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:8px;
+}
+
+.selection-toolbar__count{
+  font-size:11px;
   color:var(--muted);
 }
 
-.units{
-  max-height:320px;
-  overflow:auto;
-  padding:10px;
+.selection-toolbar__actions{
+  display:flex;
+  gap:4px;
+  align-items:center;
+}
+
+.selection-toolbar__sep{
+  color:var(--muted);
+  font-size:11px;
+}
+
+.btn-link{
+  background:none;
+  border:none;
+  padding:2px 4px;
+  font-size:11px;
+  font-weight:600;
+  color:var(--accent);
+  cursor:pointer;
+}
+
+.btn-link:hover{ text-decoration:underline }
+.btn-link:disabled{ opacity:0.5; cursor:not-allowed }
+
+/* ── Tree container ───────────────────────────────────────────────────────── */
+
+.tree-container{
+  max-height:340px;
+  overflow-y:auto;
+  padding:8px;
   border-radius:8px;
   border:1px solid var(--border);
   background:linear-gradient(180deg,#fff,#fbfdff);
+  margin-bottom:4px;
 }
 
-.unit{
+.tree{ display:flex; flex-direction:column; gap:2px; }
+
+/* ── Tree nodes ───────────────────────────────────────────────────────────── */
+
+.tree-node__header{
   display:flex;
   align-items:center;
-  gap:10px;
-  padding:8px 6px;
+  gap:6px;
+  padding:5px 4px;
   border-radius:6px;
+  cursor:default;
 }
 
-.unit:hover{ background:#fbfcff }
+.tree-node__header:hover{ background:#f1f5fd }
 
-.checkbox{ width:16px; height:16px }
+.tree-node__label{
+  flex:1;
+  font-size:12px;
+  color:#1e293b;
+  line-height:1.35;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.tree-node__hint{
+  font-size:10px;
+  color:var(--muted);
+  white-space:nowrap;
+  flex-shrink:0;
+}
+
+.tree-expand-btn{
+  background:none;
+  border:none;
+  padding:2px;
+  cursor:pointer;
+  color:var(--muted);
+  display:flex;
+  align-items:center;
+  flex-shrink:0;
+  border-radius:4px;
+}
+
+.tree-expand-btn:hover{ background:#e2e8f0; color:var(--primary) }
+
+/* ── Indented children ────────────────────────────────────────────────────── */
+
+.tree-node__children{
+  padding-left:22px;
+  display:flex;
+  flex-direction:column;
+  gap:1px;
+}
+
+/* ── Course → Learning Path → Module lines ───────────────────────────────── */
+
+.tree-lp   > .tree-node__header { padding-left:2px; }
+.tree-lp   > .tree-node__children { border-left:2px solid #c7d7fa; margin-left:10px; padding-left:12px; }
+
+.tree-module > .tree-node__header { padding-left:2px; }
+.tree-module > .tree-node__children { border-left:2px solid #a7f3d0; margin-left:10px; padding-left:12px; }
+
+/* ── Unit rows ────────────────────────────────────────────────────────────── */
+
+.tree-unit{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:5px 4px;
+  border-radius:6px;
+  cursor:pointer;
+}
+
+.tree-unit:hover{ background:#f8fafc }
+
+.tree-unit__title{
+  font-size:12px;
+  color:#334155;
+  line-height:1.35;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+/* ── Checkbox ─────────────────────────────────────────────────────────────── */
+
+.checkbox{ width:15px; height:15px; flex-shrink:0; accent-color:var(--primary) }
+
+/* ── Loading / empty states ───────────────────────────────────────────────── */
+
+.tree-loading{
+  font-size:12px;
+  color:var(--muted);
+  padding:4px 2px;
+}
+
+.tree-loading--center{
+  text-align:center;
+  padding:18px 0;
+}
+
+.tree-empty{
+  font-size:12px;
+  color:var(--muted);
+  padding:4px 2px;
+}
+
+.tree-empty--center{
+  text-align:center;
+  padding:18px 8px;
+  line-height:1.5;
+}
+
+/* ── Spin animation ───────────────────────────────────────────────────────── */
+
+@keyframes spin{ to{ transform:rotate(360deg) } }
+.spin{ animation:spin .7s linear infinite; display:block }
+
+/* ── Controls ─────────────────────────────────────────────────────────────── */
 
 .controls{ display:flex; gap:8px; align-items:center; margin-top:12px }
 
 .btn{
   background:transparent;
   border:1px solid transparent;
-  padding:8px 12px;
+  padding:7px 12px;
   border-radius:8px;
   cursor:pointer;
   font-weight:600;
+  display:flex;
+  align-items:center;
+  font-size:13px;
 }
 
 .btn:disabled{ opacity:0.6; cursor:not-allowed }
@@ -76,11 +275,20 @@
   box-shadow:0 6px 14px rgba(30,58,138,0.18);
 }
 
+/* ── Progress ─────────────────────────────────────────────────────────────── */
+
 .progress{ margin-top:10px }
-.progress__bar{ height:8px; background:#eef2ff; border-radius:6px; overflow:hidden }
-.progress__inner{ height:100%; background:var(--accent); border-radius:6px }
+.progress__label{ display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-bottom:4px; }
+.progress__bar{ height:7px; background:#eef2ff; border-radius:6px; overflow:hidden }
+.progress__inner{ height:100%; background:var(--accent); border-radius:6px; transition:width .25s ease }
 
-.tip{ margin-top:12px; font-size:12px; color:var(--muted) }
+/* ── Misc ─────────────────────────────────────────────────────────────────── */
 
-.debugToggle{ margin-top:10px }
-.debugPre{ max-height:200px; overflow:auto; background:#0b1220; color:#e6eef8; padding:10px; border-radius:6px }
+.tip{ margin-top:12px; font-size:11px; color:var(--muted); line-height:1.5 }
+
+.error-msg{
+  margin-top:8px;
+  color:#b91c1c;
+  font-size:12px;
+  line-height:1.4;
+}

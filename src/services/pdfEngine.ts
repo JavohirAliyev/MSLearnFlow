@@ -7,12 +7,12 @@ import html2canvas from 'html2canvas';
  * - filename: output filename
  * - onProgress: optional callback(progress: { step: number, total: number })
  */
-export async function generatePDF(
+async function _buildPdf(
   segments: { title: string; url: string; html: string }[],
-  filename = 'learnflow.pdf',
   onProgress?: (p: { step: number; total: number }) => void,
   moduleTitle?: string,
-) {
+  onPhase?: (label: string) => void,
+): Promise<jsPDF> {
   // Prepare PDF sizes in points
   const pdf = new jsPDF({ unit: 'pt', format: 'a4', compress: true });
   const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -130,7 +130,9 @@ export async function generatePDF(
   const imgs = Array.from(container.querySelectorAll('img')) as HTMLImageElement[];
   await Promise.all(imgs.map((img) => new Promise((res) => { if (img.complete) return res(null); img.onload = img.onerror = () => res(null); })));
 
+  onPhase?.('Rendering document\u2026');
   const canvas = await html2canvas(container, { scale: 2, useCORS: true, allowTaint: true });
+  onPhase?.('Building PDF\u2026');
 
   // Compute ratio and page height in px
   const ratio = canvas.width / pdfWidth;
@@ -294,7 +296,35 @@ export async function generatePDF(
   // cleanup container
   document.body.removeChild(container);
 
+  onPhase?.('Download starting\u2026');
+  return pdf;
+}
+
+/** Generate and immediately trigger a browser download. */
+export async function generatePDF(
+  segments: { title: string; url: string; html: string }[],
+  filename = 'learnflow.pdf',
+  onProgress?: (p: { step: number; total: number }) => void,
+  moduleTitle?: string,
+  onPhase?: (label: string) => void,
+): Promise<void> {
+  const pdf = await _buildPdf(segments, onProgress, moduleTitle, onPhase);
   pdf.save(filename);
+}
+
+/**
+ * Generate and return the raw PDF bytes — no browser download side-effect.
+ * Used by the offscreen worker which triggers the download via chrome.downloads.
+ */
+export async function generatePDFBlob(
+  segments: { title: string; url: string; html: string }[],
+  filename = 'learnflow.pdf',
+  onProgress?: (p: { step: number; total: number }) => void,
+  moduleTitle?: string,
+  onPhase?: (label: string) => void,
+): Promise<Uint8Array> {
+  const pdf = await _buildPdf(segments, onProgress, moduleTitle, onPhase);
+  return new Uint8Array(pdf.output('arraybuffer') as ArrayBuffer);
 }
 
 export default generatePDF;

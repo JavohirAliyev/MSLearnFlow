@@ -7,7 +7,9 @@
         "activeTab",
         "scripting",
         "tabs",
-        "storage"
+        "storage",
+        "offscreen",
+        "downloads"
     ],
     "host_permissions": [
         "https://learn.microsoft.com/*"
@@ -16,6 +18,10 @@
         "16": "icons/icon16.png",
         "48": "icons/icon48.png",
         "128": "icons/icon128.png"
+    },
+    "background": {
+        "service_worker": "background.js",
+        "type": "module"
     },
     "action": {
         "default_popup": "popup.html",
