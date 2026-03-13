@@ -5,7 +5,8 @@
   "description": "Chrome extension to export Microsoft Learn units to PDF",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+  "build": "vite build",
+  "postbuild": "node scripts/postbuild.js",
     "preview": "vite preview",
     "watch": "vite build --watch"
   },
